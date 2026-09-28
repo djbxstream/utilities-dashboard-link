@@ -37,11 +37,10 @@
 
 window.LAUNCHER_CONFIG = Object.freeze({
   /* Set to true only after pasting a real SHA-256 hash below. */
-  CONFIGURED: false,
+  CONFIGURED: true,
 
-  /* SHA-256 of the password, lowercase hex, 64 characters.
-   * Placeholder - deliberately not a valid hash. */
-  PASSWORD_SHA256: "SET_YOUR_64_CHARACTER_SHA256_HASH_HERE",
+  /* SHA-256 of the password, lowercase hex, 64 characters. */
+  PASSWORD_SHA256: "7dd9601a31d87d329199d0fc5454407d0517a21ed68bcfb7bcb7edbe39082ab4",
 
   /* Location of the published Cloudflare Quick Tunnel URL. The launcher does
    * not read this file until after the password is accepted, so the tunnel URL

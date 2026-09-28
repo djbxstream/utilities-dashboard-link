@@ -435,10 +435,16 @@ test("no plain-text password is stored in any committed source file", () => {
       assert.equal(ok, true, `${file} appears to contain a literal password: ${hit}`);
     }
   }
-  /* The config must hold only a placeholder until the operator configures it. */
+  /* The config is now configured, so it must hold a real 64-character digest
+   * and must no longer hold the setup placeholder. The password itself still
+   * appears nowhere in source - only its hash. */
   const config = readFileSync(join(ROOT, "launcher-config.js"), "utf8");
-  assert.match(config, /CONFIGURED: false/);
-  assert.match(config, new RegExp(GATE.CONFIGURED_PLACEHOLDER));
+  assert.match(config, /CONFIGURED: true/);
+  assert.doesNotMatch(config, new RegExp(GATE.CONFIGURED_PLACEHOLDER));
+  const shippedHash = config.match(/PASSWORD_SHA256: "([0-9a-f]{64})"/);
+  assert.ok(shippedHash, "the config must hold exactly one lowercase 64-character SHA-256 hash");
+  assert.equal(GATE.isConfigured({ CONFIGURED: true, PASSWORD_SHA256: shippedHash[1] }), true,
+    "the shipped hash must satisfy the gate's own configured check");
 });
 
 test("the constant-time comparison is correct and length-independent", () => {
@@ -496,7 +502,7 @@ test("no external auth service, backend, or tunnel config was introduced", () =>
   }
 });
 
-test("INTEGRATION: the real launcher-config.js loads and fails closed as shipped", async () => {
+test("INTEGRATION: the real launcher-config.js loads and is a valid configured gate", async () => {
   /* Load the actual configuration file the page loads, in a sandboxed global
    * so it defines window.LAUNCHER_CONFIG exactly as the browser would. */
   const configSource = readFileSync(join(ROOT, "launcher-config.js"), "utf8");
@@ -508,8 +514,10 @@ test("INTEGRATION: the real launcher-config.js loads and fails closed as shipped
   assert.equal(typeof realConfig.PUBLIC_URL_FILE, "string");
   assert.equal(realConfig.PUBLIC_URL_FILE, "./public-url.json", "must keep reading the existing file");
 
-  /* As committed, the gate must refuse to open. */
-  assert.equal(GATE.isConfigured(realConfig), false, "the shipped config must not be configured");
+  /* The shipped config is real: the gate will ask for a password. */
+  assert.equal(GATE.isConfigured(realConfig), true, "the shipped config must be configured");
+  assert.match(String(realConfig.PASSWORD_SHA256), /^[0-9a-f]{64}$/);
+  assert.notEqual(String(realConfig.PASSWORD_SHA256), GATE.CONFIGURED_PLACEHOLDER);
 
   const dom = makeDom(ELEMENT_IDS);
   const fetches = [];
@@ -527,11 +535,25 @@ test("INTEGRATION: the real launcher-config.js loads and fails closed as shipped
 
   await new Promise((r) => setTimeout(r, 0));
 
-  assert.equal(result.unlocked, false, "shipped config must not unlock");
-  assert.equal(dom.getElementById("login-error").textContent, GATE.NOT_CONFIGURED_ERROR,
-    "shipped config must show the setup message");
+  /* Fresh session: locked, no setup message, and the tunnel URL is not
+   * requested. A wrong password is rejected without unlocking. */
+  assert.equal(result.unlocked, false, "a fresh session must start locked");
+  assert.equal(dom.getElementById("login-error").textContent, "",
+    "a configured gate must not show the setup message");
   assert.equal(dom.getElementById("launcher-view").hidden, true, "launcher must stay hidden");
   assert.equal(fetches.length, 0, "no tunnel URL request while locked");
+
+  dom.getElementById("password").value = "definitely-not-the-password";
+  const gate = GATE.createGate({
+    document: dom,
+    window: { ...fakeWindow, sessionStorage: makeSessionStore(), crypto: { subtle: webcrypto.subtle }, location: { assign: () => {} } },
+    subtle: webcrypto.subtle,
+    fetch: (url, init) => { fetches.push({ url, init }); return Promise.resolve({ ok: true, json: () => Promise.resolve({}) }); },
+  });
+  assert.equal(await gate.attemptLogin(), false, "a wrong password must not unlock the shipped config");
+  assert.equal(dom.getElementById("login-error").textContent, GATE.GENERIC_ERROR);
+  assert.equal(dom.getElementById("launcher-view").hidden, true, "launcher must stay hidden after a failed attempt");
+  assert.equal(fetches.length, 0, "a failed attempt must not request the tunnel URL");
 });
 
 test("INTEGRATION: a real configured hash round-trips through the gate", async () => {
